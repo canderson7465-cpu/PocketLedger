@@ -616,6 +616,12 @@ function fmt(n){
 }
 function fmtWhole(n){ return '$' + Math.round(n).toLocaleString('en-US'); }
 function weeklyFromMonthly(m){ return m * 12 / 52; }
+const CADENCE_PERIODS_PER_YEAR = { weekly:52, monthly:12, quarterly:4, semiannual:2, annual:1 };
+const CADENCE_LABELS = { weekly:'wk', monthly:'mo', quarterly:'qtr', semiannual:'6mo', annual:'yr' };
+function weeklyFromBill(b){
+  const periods = CADENCE_PERIODS_PER_YEAR[b.cadence || 'monthly'] || 12;
+  return b.amount * periods / 52;
+}
 function logEnvelope(env, action, amount){
   DATA.envelopeLog = DATA.envelopeLog || [];
   DATA.envelopeLog.unshift({ ts: new Date().toISOString(), envId: env.id, envName: env.name, action, amount, balanceAfter: env.balance });
@@ -666,7 +672,7 @@ function billsAllocatedTotal(){
   let sum = 0;
   DATA.bills.forEach(b=>{
     if(DATA.week.billsChecked[b.id]){
-      const amt = (DATA.week.billOverride[b.id] !== undefined) ? DATA.week.billOverride[b.id] : weeklyFromMonthly(b.amount);
+      const amt = (DATA.week.billOverride[b.id] !== undefined) ? DATA.week.billOverride[b.id] : weeklyFromBill(b);
       sum += amt;
     }
   });
@@ -768,7 +774,7 @@ function renderHome(){
       <h2><span class="step">2</span> Set money aside for bills</h2>
       <p class="subtext">Check a bill once you've set its weekly share aside. Tap the amount to adjust it.</p>
       ${DATA.bills.map(b=>{
-        const baseWeekly = weeklyFromMonthly(b.amount);
+        const baseWeekly = weeklyFromBill(b);
         const catchUp = b.catchUpBalance || 0;
         const defaultWeekly = Math.max(0, Math.round(baseWeekly + catchUp));
         const weekly = (DATA.week.billOverride[b.id]!==undefined)? DATA.week.billOverride[b.id] : defaultWeekly;
@@ -781,7 +787,7 @@ function renderHome(){
         }
         return `<div class="row">
           <div class="check ${on?'on':''}" onclick="toggleBill('${b.id}')"></div>
-          <div class="name">${b.name}<small>${fmtWhole(b.amount)}/mo · due ${b.day}${status? ' · '+status : ''}</small></div>
+          <div class="name">${b.name}<small>${fmtWhole(b.amount)}/${CADENCE_LABELS[b.cadence||'monthly']} · due ${b.day}${status? ' · '+status : ''}</small></div>
           <input class="amt-input" type="number" step="1" value="${weekly.toFixed(0)}" onchange="setBillOverride('${b.id}', this.value)">
         </div>`;
       }).join('')}
@@ -880,7 +886,7 @@ function finishWeek(){
     }
   });
   DATA.bills.forEach(b=>{
-    const weeklyTarget = weeklyFromMonthly(b.amount);
+    const weeklyTarget = weeklyFromBill(b);
     const weeklyAmt = (DATA.week.billOverride[b.id] !== undefined) ? DATA.week.billOverride[b.id] : weeklyTarget;
     const actual = DATA.week.billsChecked[b.id] ? weeklyAmt : 0;
     const shortfall = weeklyTarget - actual;
@@ -1158,8 +1164,18 @@ function renderBills(){
         </div>
         <div class="fields">
           <div class="field">
-            <label>Monthly $</label>
+            <label>Amount $</label>
             <input type="number" value="${b.amount}" onchange="editBill('${b.id}','amount',this.value)">
+          </div>
+          <div class="field">
+            <label>Frequency</label>
+            <select onchange="editBill('${b.id}','cadence',this.value)">
+              <option value="weekly" ${(b.cadence||'monthly')==='weekly'?'selected':''}>Weekly</option>
+              <option value="monthly" ${(b.cadence||'monthly')==='monthly'?'selected':''}>Monthly</option>
+              <option value="quarterly" ${b.cadence==='quarterly'?'selected':''}>Every 3 months</option>
+              <option value="semiannual" ${b.cadence==='semiannual'?'selected':''}>Every 6 months</option>
+              <option value="annual" ${b.cadence==='annual'?'selected':''}>Annually</option>
+            </select>
           </div>
           <div class="field">
             <label>Due</label>
