@@ -335,6 +335,24 @@
     cursor:pointer;
     color:var(--slate);
   }
+  .icon-btn:disabled{opacity:.3; cursor:default;}
+
+  /* ---------- Drag to reorder ---------- */
+  .drag-handle{
+    width:34px; height:34px;
+    display:flex; align-items:center; justify-content:center;
+    color:var(--slate);
+    cursor:grab;
+    touch-action:none;
+    flex-shrink:0;
+  }
+  .drag-handle:active{cursor:grabbing;}
+  [data-drag-id].dragging{
+    opacity:.9;
+    box-shadow:0 10px 26px rgba(0,0,0,.22);
+    z-index:20;
+    position:relative;
+  }
 
   /* ---------- Nav ---------- */
   nav.tabbar{
@@ -422,6 +440,37 @@
     background:#fff;
   }
   .help-text{font-size:12px; color:var(--slate); margin-top:5px; line-height:1.5;}
+
+  /* ---------- In-app modal (replaces unreliable browser confirm/prompt) ---------- */
+  .modal-backdrop{
+    position:fixed; inset:0;
+    background:rgba(35,42,36,.55);
+    display:flex; align-items:center; justify-content:center;
+    z-index:100;
+    padding:20px;
+  }
+  .modal-card{
+    background:var(--card);
+    border-radius:18px;
+    padding:20px;
+    width:100%;
+    max-width:400px;
+    box-shadow:0 20px 50px rgba(0,0,0,.25);
+  }
+  .modal-message{font-size:15px; line-height:1.5; margin:0 0 14px; font-weight:600;}
+  .modal-input{
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:11px 12px;
+    font-size:15px;
+    font-family:var(--font-body);
+    margin-bottom:14px;
+    background:#fff;
+    color:var(--ink);
+  }
+  .modal-actions{display:flex; gap:10px;}
+  .modal-actions .btn{width:auto; flex:1;}
 </style>
 </head>
 <body>
@@ -432,6 +481,7 @@
   </header>
   <main id="view"></main>
   <div class="toast" id="toast"></div>
+  <div id="modalRoot"></div>
   <nav class="tabbar" id="tabbar"></nav>
 </div>
 
@@ -448,7 +498,10 @@ const ICONS = {
   bills:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>'
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
+  up:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+  grip: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
 };
 
 const DEFAULT_DATA = {
@@ -485,12 +538,75 @@ const DEFAULT_DATA = {
   ],
   week: { startDate: todayISO(), hours:40, vtoLabel:'Full week', billsChecked:{}, billOverride:{}, envDeposits:{} },
   history: [],
+  groupBankBalances: {},
+  groupOrder: ['Car','General'],
+  envelopeLog: [],
   onboardingSeen:false
 };
 
 let DATA = null;
 let TAB = 'home';
 let saveTimer = null;
+let MODAL = null;
+
+function showConfirm(message, onConfirm){
+  MODAL = { type:'confirm', message, onConfirm };
+  renderModal();
+}
+function showPrompt(message, defaultValue, onSubmit){
+  MODAL = { type:'prompt', message, value: defaultValue || '', onSubmit };
+  renderModal();
+}
+function closeModal(){
+  MODAL = null;
+  renderModal();
+}
+function modalConfirmYes(){
+  const cb = MODAL && MODAL.onConfirm;
+  closeModal();
+  if(cb) cb();
+}
+function modalPromptSubmit(){
+  const input = document.getElementById('modalInput');
+  const val = input ? input.value : '';
+  const cb = MODAL && MODAL.onSubmit;
+  closeModal();
+  if(cb) cb(val);
+}
+function modalPromptKey(evt){
+  if(evt.key === 'Enter') modalPromptSubmit();
+}
+function esc(s){ return String(s).replace(/"/g, '&quot;'); }
+function renderModal(){
+  const root = document.getElementById('modalRoot');
+  if(!MODAL){ root.innerHTML = ''; return; }
+  if(MODAL.type === 'confirm'){
+    root.innerHTML = `
+      <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+        <div class="modal-card">
+          <p class="modal-message">${MODAL.message}</p>
+          <div class="modal-actions">
+            <button class="btn ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn primary" onclick="modalConfirmYes()">Confirm</button>
+          </div>
+        </div>
+      </div>`;
+  } else if(MODAL.type === 'prompt'){
+    root.innerHTML = `
+      <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+        <div class="modal-card">
+          <p class="modal-message">${MODAL.message}</p>
+          <input id="modalInput" class="modal-input" type="text" value="${esc(MODAL.value)}" onkeydown="modalPromptKey(event)">
+          <div class="modal-actions">
+            <button class="btn ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn primary" onclick="modalPromptSubmit()">OK</button>
+          </div>
+        </div>
+      </div>`;
+    const input = document.getElementById('modalInput');
+    if(input){ input.focus(); input.select(); }
+  }
+}
 
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function fmt(n){
@@ -500,6 +616,11 @@ function fmt(n){
 }
 function fmtWhole(n){ return '$' + Math.round(n).toLocaleString('en-US'); }
 function weeklyFromMonthly(m){ return m * 12 / 52; }
+function logEnvelope(env, action, amount){
+  DATA.envelopeLog = DATA.envelopeLog || [];
+  DATA.envelopeLog.unshift({ ts: new Date().toISOString(), envId: env.id, envName: env.name, action, amount, balanceAfter: env.balance });
+  DATA.envelopeLog = DATA.envelopeLog.slice(0, 200);
+}
 
 /* ---------------- Storage ----------------
    Everything is saved with localStorage, which keeps data only on THIS
@@ -647,11 +768,20 @@ function renderHome(){
       <h2><span class="step">2</span> Set money aside for bills</h2>
       <p class="subtext">Check a bill once you've set its weekly share aside. Tap the amount to adjust it.</p>
       ${DATA.bills.map(b=>{
-        const weekly = (DATA.week.billOverride[b.id]!==undefined)? DATA.week.billOverride[b.id] : weeklyFromMonthly(b.amount);
+        const baseWeekly = weeklyFromMonthly(b.amount);
+        const catchUp = b.catchUpBalance || 0;
+        const defaultWeekly = Math.max(0, Math.round(baseWeekly + catchUp));
+        const weekly = (DATA.week.billOverride[b.id]!==undefined)? DATA.week.billOverride[b.id] : defaultWeekly;
         const on = !!DATA.week.billsChecked[b.id];
+        let status = '';
+        if(catchUp > 1){
+          status = `<span style="color:var(--alert); font-weight:700;">${fmtWhole(Math.round(catchUp))} behind</span>`;
+        } else if(catchUp < -1){
+          status = `<span style="color:var(--moss); font-weight:700;">ahead ${fmtWhole(Math.round(Math.abs(catchUp)))}</span>`;
+        }
         return `<div class="row">
           <div class="check ${on?'on':''}" onclick="toggleBill('${b.id}')"></div>
-          <div class="name">${b.name}<small>${fmtWhole(b.amount)}/mo · due ${b.day}</small></div>
+          <div class="name">${b.name}<small>${fmtWhole(b.amount)}/mo · due ${b.day}${status? ' · '+status : ''}</small></div>
           <input class="amt-input" type="number" step="1" value="${weekly.toFixed(0)}" onchange="setBillOverride('${b.id}', this.value)">
         </div>`;
       }).join('')}
@@ -660,15 +790,35 @@ function renderHome(){
     <div class="card">
       <h2><span class="step">3</span> Add to savings envelopes</h2>
       <p class="subtext">A few dollars now keeps the big goals — car repairs, healthcare, emergencies — from becoming a crisis later.</p>
-      ${DATA.envelopes.filter(e=>e.monthlyTarget>0).map(e=>{
-        const suggested = Math.round(weeklyFromMonthly(e.monthlyTarget));
-        const added = DATA.week.envDeposits[e.id] || 0;
-        return `<div class="row">
-          <div class="name">${e.name}<small>${added>0? 'Added '+fmtWhole(added)+' this week' : 'Suggested '+fmtWhole(suggested)+'/wk'}</small></div>
-          ${added>0
-            ? `<button class="btn ghost small" onclick="undoDeposit('${e.id}', ${added})">Undo</button>`
-            : `<button class="btn primary small" onclick="quickDeposit('${e.id}', ${suggested})">+ ${fmtWhole(suggested)}</button>`}
-        </div>`;
+      ${getOrderedGroups().map(g=>{
+        const groupItems = DATA.envelopes.filter(e=>e.group===g && e.monthlyTarget>0);
+        if(groupItems.length===0) return '';
+        return `
+        <div style="font-family:var(--font-display); font-weight:700; font-size:12.5px; color:var(--slate); text-transform:uppercase; letter-spacing:.04em; margin:14px 0 6px;">${g}</div>
+        ${groupItems.map(e=>{
+          const baseWeekly = weeklyFromMonthly(e.monthlyTarget);
+          const catchUp = e.catchUpBalance || 0;
+          const suggested = Math.max(0, Math.round(baseWeekly + catchUp));
+          const added = DATA.week.envDeposits[e.id] || 0;
+          let label;
+          if(added>0){
+            label = 'Added '+fmtWhole(added)+' this week';
+          } else if(catchUp > 1){
+            label = 'Suggested '+fmtWhole(suggested)+'/wk (usual '+fmtWhole(Math.round(baseWeekly))+' + '+fmtWhole(Math.round(catchUp))+' catch-up)';
+          } else if(catchUp < -1){
+            label = 'Suggested '+fmtWhole(suggested)+'/wk (ahead by '+fmtWhole(Math.round(Math.abs(catchUp)))+')';
+          } else {
+            label = 'Suggested '+fmtWhole(suggested)+'/wk';
+          }
+          return `<div class="row">
+            <div class="name">${e.name}<small>${label}</small></div>
+            ${added>0
+              ? `<button class="btn ghost small" onclick="undoDeposit('${e.id}', ${added})">Undo</button>`
+              : `<input class="amt-input" type="number" step="1" id="envAmt_${e.id}" value="${suggested}">
+                 <button class="btn primary small" onclick="addEnvAmount('${e.id}')">Add</button>`}
+          </div>`;
+        }).join('')}
+        `;
       }).join('')}
     </div>
 
@@ -687,11 +837,18 @@ function setBillOverride(id, val){
   if(!isNaN(n)) DATA.week.billOverride[id] = n;
   saveData(); render();
 }
+function addEnvAmount(envId){
+  const input = document.getElementById('envAmt_'+envId);
+  const n = input ? parseFloat(input.value) : NaN;
+  if(isNaN(n) || n<=0){ flashToast('Enter an amount first'); return; }
+  quickDeposit(envId, n);
+}
 function quickDeposit(envId, amount){
   const env = DATA.envelopes.find(e=>e.id===envId);
   if(!env) return;
   env.balance += amount;
   DATA.week.envDeposits[envId] = (DATA.week.envDeposits[envId]||0) + amount;
+  logEnvelope(env, 'weekly deposit', amount);
   saveData(); render();
   flashToast('Added '+fmtWhole(amount)+' to '+env.name);
 }
@@ -700,6 +857,7 @@ function undoDeposit(envId, amount){
   if(!env) return;
   env.balance -= amount;
   delete DATA.week.envDeposits[envId];
+  logEnvelope(env, 'undo weekly deposit', -amount);
   saveData(); render();
 }
 function finishWeek(){
@@ -713,6 +871,21 @@ function finishWeek(){
   };
   DATA.history.unshift(summary);
   DATA.history = DATA.history.slice(0, 52);
+  DATA.envelopes.forEach(e=>{
+    if(e.monthlyTarget > 0){
+      const weeklyTarget = weeklyFromMonthly(e.monthlyTarget);
+      const actual = DATA.week.envDeposits[e.id] || 0;
+      const shortfall = weeklyTarget - actual;
+      e.catchUpBalance = (e.catchUpBalance || 0) + shortfall;
+    }
+  });
+  DATA.bills.forEach(b=>{
+    const weeklyTarget = weeklyFromMonthly(b.amount);
+    const weeklyAmt = (DATA.week.billOverride[b.id] !== undefined) ? DATA.week.billOverride[b.id] : weeklyTarget;
+    const actual = DATA.week.billsChecked[b.id] ? weeklyAmt : 0;
+    const shortfall = weeklyTarget - actual;
+    b.catchUpBalance = (b.catchUpBalance || 0) + shortfall;
+  });
   DATA.week = { startDate: todayISO(), hours: DATA.week.hours, vtoLabel:'', billsChecked:{}, billOverride:{}, envDeposits:{} };
   saveData();
   render();
@@ -721,49 +894,244 @@ function finishWeek(){
 
 /* ---------------- ENVELOPES ---------------- */
 function renderEnvelopes(){
-  const groups = ['Car','General'];
-  return groups.map(g=>{
-    const items = DATA.envelopes.filter(e=>e.group===g);
-    const total = items.reduce((s,e)=>s+e.balance,0);
-    return `
-      <div class="env-group-title">${g} envelopes <b>${fmtWhole(total)}</b></div>
-      ${items.map(e=>`
-        <div class="envelope">
-          <div class="flap"></div>
-          <div class="body">
-            <div class="top-row">
-              <div class="ename">${e.name}</div>
-              <div class="ebal">${fmt(e.balance)}</div>
-            </div>
-            <div class="etarget">${e.monthlyTarget>0? 'Goal: '+fmtWhole(e.monthlyTarget)+'/mo' : 'No monthly goal set'}</div>
-            <div class="actions">
-              <div class="chip" onclick="envMove('${e.id}', 5)">+$5</div>
-              <div class="chip" onclick="envMove('${e.id}', 20)">+$20</div>
-              <div class="chip" onclick="envMove('${e.id}', 50)">+$50</div>
-              <div class="chip" onclick="envCustom('${e.id}')">+Custom</div>
-              <div class="chip minus" onclick="envCustom('${e.id}', true)">− Spend from this</div>
+  const groups = getOrderedGroups();
+  return `
+    ${groups.map((g,gIdx)=>{
+      const items = DATA.envelopes.filter(e=>e.group===g);
+      const total = items.reduce((s,e)=>s+e.balance,0);
+      const bank = (DATA.groupBankBalances && DATA.groupBankBalances[g] !== undefined) ? DATA.groupBankBalances[g] : 0;
+      const diff = bank - total;
+      const matches = Math.abs(diff) < 0.01;
+      return `
+        <div class="env-group-title">
+          <span>${g} envelopes
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;margin-left:4px;" onclick="renameGroup('${g}')" aria-label="Rename group">✏️</button>
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="moveGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="moveGroup('${g}', 1)" aria-label="Move group down" ${gIdx===groups.length-1?'disabled':''}>${ICONS.down}</button>
+          </span>
+          <b>${fmtWhole(total)}</b>
+        </div>
+        <div class="card" style="margin-bottom:14px; padding:14px 16px;">
+          <div class="fields" style="margin-top:0;">
+            <div class="field">
+              <label>${g} savings account balance</label>
+              <input type="number" value="${bank}" onchange="setGroupBank('${g}', this.value)">
             </div>
           </div>
+          <div class="help-text" style="margin-top:8px; ${matches?'color:var(--moss);':'color:var(--alert);'} font-weight:600;">
+            ${matches ? '✓ Matches your envelope total' : (diff>0 ? 'Account is '+fmtWhole(diff)+' higher than envelopes — untracked money somewhere' : 'Envelopes are '+fmtWhole(Math.abs(diff))+' higher than the account — a deposit may be missing')}
+          </div>
         </div>
-      `).join('')}
-    `;
-  }).join('');
+        ${items.map((e,eIdx)=>`
+          <div class="envelope" data-drag-id="${e.id}" data-drag-scope="group:${g}">
+            <div class="flap"></div>
+            <div class="body">
+              <div class="row-top">
+                <span class="drag-handle" onpointerdown="dragStart(event,'${e.id}','group:${g}')">${ICONS.grip}</span>
+                <input value="${e.name}" style="border:none;background:none;font-weight:700;font-size:14.5px;font-family:inherit;flex:1;padding:0;color:var(--ink);" onchange="editEnvelope('${e.id}','name',this.value)">
+                <button class="icon-btn" onclick="removeEnvelope('${e.id}')">${ICONS.trash}</button>
+              </div>
+              <div class="ebal" style="margin-top:4px;">${fmt(e.balance)}</div>
+              ${e.monthlyTarget>0 && Math.abs(e.catchUpBalance||0) > 1 ? `<div class="help-text" style="margin-top:4px; ${(e.catchUpBalance>0)?'color:var(--alert);':'color:var(--moss);'} font-weight:600;">${e.catchUpBalance>0 ? fmtWhole(Math.round(e.catchUpBalance))+' behind on this goal' : 'Ahead by '+fmtWhole(Math.round(Math.abs(e.catchUpBalance)))+' on this goal'}</div>` : ''}
+              <div class="fields" style="margin-top:10px;">
+                <div class="field">
+                  <label>Group</label>
+                  <select onchange="handleGroupChange('${e.id}', this.value)">
+                    ${groups.map(g2=>`<option value="${g2}" ${g2===e.group?'selected':''}>${g2}</option>`).join('')}
+                    <option value="__new__">+ New group…</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Monthly goal $</label>
+                  <input type="number" value="${e.monthlyTarget}" onchange="editEnvelope('${e.id}','monthlyTarget',this.value)">
+                </div>
+                <div class="field">
+                  <label>Due (optional)</label>
+                  <input value="${e.dueDay || ''}" placeholder="e.g. 1st" onchange="editEnvelope('${e.id}','dueDay',this.value)">
+                </div>
+              </div>
+              <div class="actions">
+                <div class="chip" onclick="envMove('${e.id}', 5)">+$5</div>
+                <div class="chip" onclick="envMove('${e.id}', 20)">+$20</div>
+                <div class="chip" onclick="envMove('${e.id}', 50)">+$50</div>
+                <div class="chip" onclick="envCustom('${e.id}')">+Custom</div>
+                <div class="chip minus" onclick="envCustom('${e.id}', true)">− Spend from this</div>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      `;
+    }).join('')}
+    <button class="btn ghost" onclick="addEnvelope()">${ICONS.plus} Add an envelope</button>
+  `;
+}
+function setGroupBank(group, value){
+  DATA.groupBankBalances = DATA.groupBankBalances || {};
+  DATA.groupBankBalances[group] = parseFloat(value)||0;
+  saveData(); render();
+}
+function getOrderedGroups(){
+  const existing = [...new Set(DATA.envelopes.map(e=>e.group))];
+  const order = DATA.groupOrder || [];
+  const ordered = order.filter(g=>existing.includes(g));
+  const missing = existing.filter(g=>!ordered.includes(g));
+  return [...ordered, ...missing];
+}
+/* ---------------- Drag to reorder (bills, envelopes-within-group) ---------------- */
+let DRAG = null;
+function dragStart(evt, id, scope){
+  evt.preventDefault();
+  const item = evt.currentTarget.closest('[data-drag-id]');
+  if(!item) return;
+  const container = item.parentElement;
+  const siblingEls = Array.from(container.querySelectorAll(`[data-drag-scope="${scope}"]`));
+  const siblings = siblingEls.map(el=>({ id: el.getAttribute('data-drag-id'), rect: el.getBoundingClientRect() }));
+  DRAG = {
+    id, scope, item,
+    startY: evt.clientY,
+    siblings,
+    currentIndex: siblings.findIndex(s=>s.id===id)
+  };
+  item.classList.add('dragging');
+  document.addEventListener('pointermove', dragMove);
+  document.addEventListener('pointerup', dragEnd);
+}
+function dragMove(evt){
+  if(!DRAG) return;
+  const deltaY = evt.clientY - DRAG.startY;
+  DRAG.item.style.transform = `translateY(${deltaY}px)`;
+}
+function dragEnd(evt){
+  if(!DRAG) return;
+  const deltaY = evt.clientY - DRAG.startY;
+  document.removeEventListener('pointermove', dragMove);
+  document.removeEventListener('pointerup', dragEnd);
+  DRAG.item.style.transform = '';
+  DRAG.item.classList.remove('dragging');
+
+  const dragged = DRAG.siblings[DRAG.currentIndex];
+  const newCenterY = dragged.rect.top + dragged.rect.height/2 + deltaY;
+  let newIndex = 0;
+  DRAG.siblings.forEach((s,i)=>{
+    if(i===DRAG.currentIndex) return;
+    if(s.rect.top + s.rect.height/2 < newCenterY) newIndex++;
+  });
+  commitReorder(DRAG.scope, DRAG.id, newIndex);
+  DRAG = null;
+}
+function commitReorder(scope, id, newIndex){
+  if(scope === 'bills'){
+    const oldIndex = DATA.bills.findIndex(b=>b.id===id);
+    if(oldIndex<0 || oldIndex===newIndex){ render(); return; }
+    const [item] = DATA.bills.splice(oldIndex,1);
+    DATA.bills.splice(newIndex,0,item);
+    saveData(); render();
+  } else if(scope.indexOf('group:')===0){
+    const groupName = scope.slice(6);
+    const sameGroupIdxs = DATA.envelopes.map((e,i)=>({e,i})).filter(x=>x.e.group===groupName).map(x=>x.i);
+    const posInGroup = sameGroupIdxs.findIndex(i=>DATA.envelopes[i].id===id);
+    if(posInGroup<0 || posInGroup===newIndex){ render(); return; }
+    const actualOldIdx = sameGroupIdxs[posInGroup];
+    const [item] = DATA.envelopes.splice(actualOldIdx,1);
+    const newSameGroupIdxs = DATA.envelopes.map((e,i)=>({e,i})).filter(x=>x.e.group===groupName).map(x=>x.i);
+    const insertAt = newIndex >= newSameGroupIdxs.length
+      ? (newSameGroupIdxs.length ? newSameGroupIdxs[newSameGroupIdxs.length-1]+1 : DATA.envelopes.length)
+      : newSameGroupIdxs[newIndex];
+    DATA.envelopes.splice(insertAt,0,item);
+    saveData(); render();
+  } else {
+    render();
+  }
+}
+function moveGroup(name, direction){
+  const groups = getOrderedGroups();
+  const idx = groups.indexOf(name);
+  const swapIdx = idx + direction;
+  if(swapIdx<0 || swapIdx>=groups.length) return;
+  [groups[idx], groups[swapIdx]] = [groups[swapIdx], groups[idx]];
+  DATA.groupOrder = groups;
+  saveData(); render();
+}
+function renameGroup(oldName){
+  showPrompt('Rename "'+oldName+'" to:', oldName, (newName)=>{
+    if(!newName || !newName.trim() || newName.trim()===oldName) return;
+    const trimmed = newName.trim();
+    const merging = DATA.envelopes.some(e=>e.group===trimmed);
+    const doRename = ()=>{
+      DATA.envelopes.forEach(e=>{ if(e.group===oldName) e.group = trimmed; });
+      DATA.groupBankBalances = DATA.groupBankBalances || {};
+      if(DATA.groupBankBalances[oldName] !== undefined){
+        if(DATA.groupBankBalances[trimmed] === undefined){
+          DATA.groupBankBalances[trimmed] = DATA.groupBankBalances[oldName];
+        }
+        delete DATA.groupBankBalances[oldName];
+      }
+      DATA.groupOrder = (DATA.groupOrder||[]).map(g=> g===oldName ? trimmed : g)
+        .filter((g,i,arr)=>arr.indexOf(g)===i);
+      saveData(); render();
+      flashToast('Renamed to '+trimmed);
+    };
+    if(merging){
+      showConfirm('"'+trimmed+'" already exists — this will combine both into one group. Continue?', doRename);
+    } else {
+      doRename();
+    }
+  });
+}
+function editEnvelope(id, field, value){
+  const e = DATA.envelopes.find(x=>x.id===id);
+  if(!e) return;
+  e[field] = (field==='monthlyTarget') ? (parseFloat(value)||0) : value;
+  saveData(); render();
+}
+function handleGroupChange(id, value){
+  if(value === '__new__'){
+    showPrompt('Name for the new group/account?', '', (name)=>{
+      if(!name || !name.trim()){ render(); return; }
+      const trimmed = name.trim();
+      if(!(DATA.groupOrder||[]).includes(trimmed)){
+        DATA.groupOrder = [...(DATA.groupOrder||[]), trimmed];
+      }
+      editEnvelope(id, 'group', trimmed);
+    });
+    return;
+  }
+  editEnvelope(id, 'group', value);
+}
+function removeEnvelope(id){
+  showConfirm('Remove this envelope? Its balance will no longer be tracked.', ()=>{
+    DATA.envelopes = DATA.envelopes.filter(e=>e.id!==id);
+    saveData(); render();
+  });
+}
+function addEnvelope(){
+  const id = 'e_'+Date.now();
+  DATA.envelopes.push({id, group:'General', name:'New envelope', balance:0, monthlyTarget:0});
+  saveData(); render();
 }
 function envMove(id, amount){
   const env = DATA.envelopes.find(e=>e.id===id);
   if(!env) return;
   env.balance += amount;
+  DATA.week.envDeposits[id] = (DATA.week.envDeposits[id] || 0) + amount;
+  logEnvelope(env, 'add', amount);
   saveData(); render();
   flashToast('Added '+fmtWhole(amount)+' to '+env.name);
 }
 function envCustom(id, subtract){
   const env = DATA.envelopes.find(e=>e.id===id);
   if(!env) return;
-  const raw = prompt((subtract? 'Spend how much from ' : 'Add how much to ')+env.name+'?');
-  const n = parseFloat(raw);
-  if(isNaN(n) || n<=0) return;
-  env.balance += subtract? -n : n;
-  saveData(); render();
+  showPrompt((subtract? 'Spend how much from ' : 'Add how much to ')+env.name+'?', '', (raw)=>{
+    const n = parseFloat(raw);
+    if(isNaN(n) || n<=0) return;
+    const delta = subtract? -n : n;
+    env.balance += delta;
+    if(!subtract){
+      DATA.week.envDeposits[id] = (DATA.week.envDeposits[id] || 0) + delta;
+    }
+    logEnvelope(env, subtract? 'spend' : 'add', delta);
+    saveData(); render();
+  });
 }
 
 /* ---------------- BILLS ---------------- */
@@ -773,9 +1141,18 @@ function renderBills(){
       <h2>Recurring bills</h2>
       <p class="subtext">Edit an amount the moment it changes — like a higher electric bill in summer. Weekly checklist amounts update automatically.</p>
     </div>
-    ${DATA.bills.map(b=>`
-      <div class="bill-edit-row">
+    ${DATA.bills.map((b,bIdx)=>{
+      const catchUp = b.catchUpBalance || 0;
+      let status = '';
+      if(catchUp > 1){
+        status = `<div class="help-text" style="margin-top:8px; color:var(--alert); font-weight:600;">${fmtWhole(Math.round(catchUp))} behind on this bill</div>`;
+      } else if(catchUp < -1){
+        status = `<div class="help-text" style="margin-top:8px; color:var(--moss); font-weight:600;">Ahead by ${fmtWhole(Math.round(Math.abs(catchUp)))} on this bill</div>`;
+      }
+      return `
+      <div class="bill-edit-row" data-drag-id="${b.id}" data-drag-scope="bills">
         <div class="row-top">
+          <span class="drag-handle" onpointerdown="dragStart(event,'${b.id}','bills')">${ICONS.grip}</span>
           <input value="${b.name}" style="border:none;background:none;font-weight:700;font-size:15px;font-family:inherit;flex:1;padding:0;" onchange="editBill('${b.id}','name',this.value)">
           <button class="icon-btn" onclick="removeBill('${b.id}')">${ICONS.trash}</button>
         </div>
@@ -796,8 +1173,9 @@ function renderBills(){
             </select>
           </div>
         </div>
+        ${status}
       </div>
-    `).join('')}
+    `;}).join('')}
     <button class="btn ghost" onclick="addBill()">${ICONS.plus} Add a bill</button>
   `;
 }
@@ -808,9 +1186,10 @@ function editBill(id, field, value){
   saveData(); render();
 }
 function removeBill(id){
-  if(!confirm('Remove this bill?')) return;
-  DATA.bills = DATA.bills.filter(b=>b.id!==id);
-  saveData(); render();
+  showConfirm('Remove this bill?', ()=>{
+    DATA.bills = DATA.bills.filter(b=>b.id!==id);
+    saveData(); render();
+  });
 }
 function addBill(){
   const id = 'b_'+Date.now();
@@ -851,6 +1230,23 @@ function renderSettings(){
     </div>
 
     <div class="card">
+      <h2>Envelope activity</h2>
+      <p class="subtext">Every deposit, spend, or quick-add — newest first — so you can verify a balance change actually happened.</p>
+      ${(!DATA.envelopeLog || DATA.envelopeLog.length===0) ? '<div class="empty">No envelope activity yet.</div>' :
+        DATA.envelopeLog.slice(0,30).map(l=>`
+          <div class="history-row">
+            <div>
+              <div>${l.envName}</div>
+              <div class="d">${new Date(l.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})} · ${l.action}</div>
+            </div>
+            <div class="amt ${l.amount<0?'neg':'pos'}">${l.amount<0?'-':'+'}${fmtWhole(Math.abs(l.amount))} <span style="color:var(--slate); font-weight:400;">→ ${fmtWhole(l.balanceAfter)}</span></div>
+          </div>
+        `).join('')
+      }
+      ${DATA.envelopeLog && DATA.envelopeLog.length>30 ? '<div class="help-text" style="margin-top:10px">Showing the most recent 30 of '+DATA.envelopeLog.length+' entries.</div>' : ''}
+    </div>
+
+    <div class="card">
       <h2>Sync phone &amp; PC</h2>
       <p class="subtext">No internet involved — this just turns your data into a short code you copy from one device and paste into the other. Whichever code you load becomes the new copy on that device, so load the newest one.</p>
       <button class="btn ghost small" onclick="showExportCode()">Get code from this device</button>
@@ -880,9 +1276,10 @@ function setProfile(field, value){
   saveData(); render();
 }
 function resetAll(){
-  if(!confirm('This clears everything and cannot be undone. Continue?')) return;
-  DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
-  saveData(); render();
+  showConfirm('This clears everything and cannot be undone. Continue?', ()=>{
+    DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
+    saveData(); render();
+  });
 }
 
 /* ---------------- Sync (copy/paste code, no network) ---------------- */
@@ -914,11 +1311,12 @@ function doImport(){
     parsed = JSON.parse(json);
   }catch(e){ parsed = null; }
   if(!parsed || !parsed.bills){ flashToast("That code didn't work — make sure it was copied in full"); return; }
-  if(!confirm('This replaces everything on this device with the pasted data. Continue?')) return;
-  DATA = Object.assign({}, DEFAULT_DATA, parsed);
-  saveData();
-  render();
-  flashToast('Synced!');
+  showConfirm('This replaces everything on this device with the pasted data. Continue?', ()=>{
+    DATA = Object.assign({}, DEFAULT_DATA, parsed);
+    saveData();
+    render();
+    flashToast('Synced!');
+  });
 }
 function emailBackup(){
   const code = exportCode();

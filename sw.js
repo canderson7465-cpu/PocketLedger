@@ -1,4 +1,4 @@
-const CACHE = 'pocket-ledger-v2';
+const CACHE = 'pocket-ledger-v3';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -16,14 +16,15 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Network-first: always try to fetch the latest version when online (so
+// updates show up immediately), and only fall back to the cached copy
+// when there's no signal at all — that's what keeps the app usable offline.
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy)).catch(()=>{});
-        return response;
-      }).catch(() => cached);
-    })
+    fetch(event.request).then((response) => {
+      const copy = response.clone();
+      caches.open(CACHE).then((cache) => cache.put(event.request, copy)).catch(()=>{});
+      return response;
+    }).catch(() => caches.match(event.request))
   );
 });
