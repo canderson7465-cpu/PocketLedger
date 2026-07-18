@@ -1,4 +1,4 @@
-const CACHE = 'pocket-ledger-v1';
+const CACHE = 'pocket-ledger-v2';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -9,7 +9,11 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((names) => Promise.all(
+      names.filter((n) => n !== CACHE).map((n) => caches.delete(n))
+    )).then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', (event) => {
