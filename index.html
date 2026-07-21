@@ -34,6 +34,9 @@
     --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', 'Courier New', monospace;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+  input[type=number]{ -moz-appearance:textfield; appearance:textfield; }
   html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:var(--font-body);}
   body{
     min-height:100vh;
@@ -428,6 +431,17 @@
   .history-row .amt.neg{color:var(--alert);}
   .history-row .amt.pos{color:var(--moss);}
 
+  .pay-input{
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:14px 14px;
+    font-size:26px;
+    font-weight:700;
+    font-family:var(--font-mono);
+    background:#fff;
+    color:var(--ink);
+  }
   .settings-label{font-size:13px; font-weight:600; margin-bottom:6px; display:block;}
   .settings-row{margin-bottom:16px;}
   .settings-row input{
@@ -536,11 +550,13 @@ const DEFAULT_DATA = {
     { id:'e_emergency', group:'General', name:'Emergency', balance:1718, monthlyTarget:50 },
     { id:'e_inherit', group:'General', name:'Inheritance', balance:4550, monthlyTarget:0 }
   ],
-  week: { startDate: todayISO(), hours:40, vtoLabel:'Full week', billsChecked:{}, billOverride:{}, envDeposits:{} },
+  week: { startDate: todayISO(), payAmount:0, miscIncome:[], billsChecked:{}, billOverride:{}, envDeposits:{} },
   history: [],
   groupBankBalances: {},
   groupOrder: ['Car','General'],
   envelopeLog: [],
+  transactions: [],
+  historyRetentionDays: 90,
   onboardingSeen:false
 };
 
@@ -627,6 +643,69 @@ function logEnvelope(env, action, amount){
   DATA.envelopeLog.unshift({ ts: new Date().toISOString(), envId: env.id, envName: env.name, action, amount, balanceAfter: env.balance });
   DATA.envelopeLog = DATA.envelopeLog.slice(0, 200);
 }
+/* General transaction ledger — pay, misc income, and bills. Envelope
+   activity keeps living in envelopeLog above; the two are merged for
+   display in the Transaction History card. Amount sign: positive = money
+   in, negative = money out. */
+function logTransaction(category, label, amount, refId){
+  DATA.transactions = DATA.transactions || [];
+  DATA.transactions.unshift({ ts: new Date().toISOString(), category, label, amount, weekStart: DATA.week.startDate, refId });
+  DATA.transactions = DATA.transactions.slice(0, 300);
+}
+/* Used for entries that should have at most one live row per week per
+   label (pay, a given bill) — editing updates the existing row instead of
+   stacking duplicates; setting amount to 0 removes the row. */
+function upsertWeekTransaction(category, label, amount){
+  DATA.transactions = DATA.transactions || [];
+  const existing = DATA.transactions.find(t=>t.category===category && t.label===label && t.weekStart===DATA.week.startDate);
+  if(!amount){
+    if(existing) DATA.transactions = DATA.transactions.filter(t=>t!==existing);
+    return;
+  }
+  if(existing){
+    existing.amount = amount;
+    existing.ts = new Date().toISOString();
+  } else {
+    DATA.transactions.unshift({ ts: new Date().toISOString(), category, label, amount, weekStart: DATA.week.startDate });
+  }
+  DATA.transactions = DATA.transactions.slice(0, 300);
+}
+function getAllTransactions(){
+  const tx = (DATA.transactions||[]).map(t=>({ ts:t.ts, category:t.category, label:t.label, amount:t.amount }));
+  const envTx = (DATA.envelopeLog||[]).map(l=>({ ts:l.ts, category:'Envelope', label: l.envName+' — '+l.action, amount:l.amount }));
+  return [...tx, ...envTx].sort((a,b)=> new Date(b.ts) - new Date(a.ts));
+}
+/* Auto-trims transaction/envelope history older than the retention
+   window (0 = keep forever). Runs once on load, and again whenever the
+   retention setting changes. This is separate from the weekly "History"
+   summary and envelope balances, which are never pruned. */
+function pruneTransactionHistory(){
+  const days = DATA.historyRetentionDays;
+  if(!days || days<=0) return;
+  const cutoff = Date.now() - days*24*60*60*1000;
+  DATA.transactions = (DATA.transactions||[]).filter(t=> new Date(t.ts).getTime() >= cutoff);
+  DATA.envelopeLog = (DATA.envelopeLog||[]).filter(l=> new Date(l.ts).getTime() >= cutoff);
+}
+function groupTransactionsByDay(list){
+  const groups = [];
+  const byKey = {};
+  list.forEach(t=>{
+    const d = new Date(t.ts);
+    const key = d.toISOString().slice(0,10);
+    if(!byKey[key]){
+      byKey[key] = { key, dateLabel: d.toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'}), items:[], net:0 };
+      groups.push(byKey[key]);
+    }
+    byKey[key].items.push(t);
+    byKey[key].net += t.amount;
+  });
+  return groups;
+}
+let TX_COLLAPSE = {};
+function toggleTxDay(key){
+  TX_COLLAPSE[key] = !TX_COLLAPSE[key];
+  render();
+}
 
 /* ---------------- Storage ----------------
    Everything is saved with localStorage, which keeps data only on THIS
@@ -646,6 +725,7 @@ async function loadData(){
   } catch(e){
     DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
   }
+  pruneTransactionHistory();
 }
 function saveData(showToast){
   clearTimeout(saveTimer);
@@ -664,9 +744,11 @@ function flashToast(msg){
 }
 
 /* ---------------- Derived calculations ---------------- */
+function miscIncomeTotal(){
+  return (DATA.week.miscIncome||[]).reduce((s,m)=> s + (m.amount||0), 0);
+}
 function netPay(){
-  const gross = DATA.week.hours * DATA.profile.hourlyRate;
-  return gross * (1 - DATA.profile.deductionRate);
+  return (DATA.week.payAmount||0) + miscIncomeTotal();
 }
 function billsAllocatedTotal(){
   let sum = 0;
@@ -755,18 +837,35 @@ function renderHome(){
     </div>
 
     <div class="card">
-      <h2><span class="step">1</span> Hours worked this week</h2>
-      <div class="chip-row">
-        ${[0,20,32,40].map(h=>`<div class="chip ${DATA.week.hours===h?'active':''}" onclick="setHours(${h})">${h===0?'Off':h+' hrs'}</div>`).join('')}
+      <h2><span class="step">1</span> Pay this week</h2>
+      <p class="subtext">Enter your take-home pay for this week.</p>
+      <input class="pay-input" type="number" step="0.01" inputmode="decimal" placeholder="0.00" value="${DATA.week.payAmount || ''}" onchange="setPayAmount(this.value)">
+
+      <div style="margin-top:16px; padding-top:14px; border-top:1px dashed var(--line);">
+        <span class="settings-label">Misc income (optional)</span>
+        <p class="subtext" style="margin-top:-2px;">Birthday money, a bonus, a tax refund — anything extra.</p>
+        ${(DATA.week.miscIncome||[]).map((m,idx)=>`
+          <div class="row">
+            <div class="name">${m.label}<small>added this week</small></div>
+            <div style="font-family:var(--font-mono); font-weight:700; margin-right:6px;">${fmt(m.amount)}</div>
+            <button class="icon-btn" onclick="removeMiscIncome(${idx})">${ICONS.trash}</button>
+          </div>
+        `).join('')}
+        <div class="fields" style="margin-top:${(DATA.week.miscIncome||[]).length ? '10px' : '4px'};">
+          <div class="field" style="flex:1.6;">
+            <label>What's it for?</label>
+            <input type="text" id="miscLabelInput" placeholder="e.g. Birthday gift">
+          </div>
+          <div class="field">
+            <label>Amount $</label>
+            <input type="number" step="1" id="miscAmountInput" placeholder="0">
+          </div>
+        </div>
+        <button class="btn ghost small" style="margin-top:10px;" onclick="addMiscIncome()">${ICONS.plus} Add income</button>
       </div>
-      <div class="stepper-row">
-        <button class="stepper-btn" onclick="bumpHours(-4)">−</button>
-        <div class="stepper-value">${DATA.week.hours}<small>hours</small></div>
-        <button class="stepper-btn" onclick="bumpHours(4)">+</button>
-      </div>
+
       <div class="pay-breakdown">
-        <span>Gross: <b>${fmt(DATA.week.hours*DATA.profile.hourlyRate)}</b></span>
-        <span>Take-home: <b>${fmt(net)}</b></span>
+        <span>Total in this week: <b>${fmt(net)}</b></span>
       </div>
     </div>
 
@@ -832,15 +931,54 @@ function renderHome(){
   `;
 }
 function dismissOnboarding(){ DATA.onboardingSeen = true; saveData(); render(); }
-function setHours(h){ DATA.week.hours = h; saveData(); render(); }
-function bumpHours(delta){ DATA.week.hours = Math.max(0, Math.min(60, DATA.week.hours+delta)); saveData(); render(); }
+function setPayAmount(val){
+  const n = parseFloat(val);
+  DATA.week.payAmount = isNaN(n) ? 0 : n;
+  upsertWeekTransaction('Pay', 'Weekly pay', DATA.week.payAmount);
+  saveData(); render();
+}
+function addMiscIncome(){
+  const labelInput = document.getElementById('miscLabelInput');
+  const amtInput = document.getElementById('miscAmountInput');
+  const label = labelInput ? labelInput.value.trim() : '';
+  const amount = amtInput ? parseFloat(amtInput.value) : NaN;
+  if(isNaN(amount) || amount<=0){ flashToast('Enter an amount first'); return; }
+  const item = { id:'mi_'+Date.now(), label: label || 'Misc income', amount };
+  DATA.week.miscIncome = DATA.week.miscIncome || [];
+  DATA.week.miscIncome.push(item);
+  logTransaction('Misc income', item.label, item.amount, item.id);
+  saveData(); render();
+  flashToast('Added '+fmtWhole(amount));
+}
+function removeMiscIncome(idx){
+  const list = DATA.week.miscIncome || [];
+  const item = list[idx];
+  if(!item) return;
+  list.splice(idx,1);
+  DATA.transactions = (DATA.transactions||[]).filter(t=>t.refId !== item.id);
+  saveData(); render();
+}
 function toggleBill(id){
   DATA.week.billsChecked[id] = !DATA.week.billsChecked[id];
+  const b = DATA.bills.find(x=>x.id===id);
+  if(b){
+    if(DATA.week.billsChecked[id]){
+      const amt = (DATA.week.billOverride[id]!==undefined) ? DATA.week.billOverride[id] : weeklyFromBill(b);
+      upsertWeekTransaction('Bill', b.name, -amt);
+    } else {
+      upsertWeekTransaction('Bill', b.name, 0);
+    }
+  }
   saveData(); render();
 }
 function setBillOverride(id, val){
   const n = parseFloat(val);
   if(!isNaN(n)) DATA.week.billOverride[id] = n;
+  const b = DATA.bills.find(x=>x.id===id);
+  if(b && DATA.week.billsChecked[id]){
+    const amt = (DATA.week.billOverride[id]!==undefined) ? DATA.week.billOverride[id] : weeklyFromBill(b);
+    upsertWeekTransaction('Bill', b.name, -amt);
+  }
   saveData(); render();
 }
 function addEnvAmount(envId){
@@ -869,7 +1007,8 @@ function undoDeposit(envId, amount){
 function finishWeek(){
   const summary = {
     startDate: DATA.week.startDate,
-    hours: DATA.week.hours,
+    pay: DATA.week.payAmount || 0,
+    misc: miscIncomeTotal(),
     net: netPay(),
     bills: billsAllocatedTotal(),
     saved: savingsAllocatedTotal(),
@@ -892,7 +1031,7 @@ function finishWeek(){
     const shortfall = weeklyTarget - actual;
     b.catchUpBalance = (b.catchUpBalance || 0) + shortfall;
   });
-  DATA.week = { startDate: todayISO(), hours: DATA.week.hours, vtoLabel:'', billsChecked:{}, billOverride:{}, envDeposits:{} };
+  DATA.week = { startDate: todayISO(), payAmount:0, miscIncome:[], billsChecked:{}, billOverride:{}, envDeposits:{} };
   saveData();
   render();
   flashToast('Week saved — fresh start!');
@@ -1216,20 +1355,9 @@ function addBill(){
 /* ---------------- SETTINGS ---------------- */
 function renderSettings(){
   const hist = DATA.history;
+  const allTx = getAllTransactions();
+  const txGroups = groupTransactionsByDay(allTx);
   return `
-    <div class="card">
-      <h2>Pay settings</h2>
-      <div class="settings-row">
-        <span class="settings-label">Hourly rate</span>
-        <input type="number" step="0.01" value="${DATA.profile.hourlyRate}" onchange="setProfile('hourlyRate', this.value)">
-      </div>
-      <div class="settings-row" style="margin-bottom:0">
-        <span class="settings-label">Deductions (taxes, insurance, 401k)</span>
-        <input type="number" step="1" value="${Math.round(DATA.profile.deductionRate*100)}" onchange="setProfile('deductionRate', this.value/100)">
-        <div class="help-text">Currently ${Math.round(DATA.profile.deductionRate*100)}% comes out of every paycheck before it hits the bank.</div>
-      </div>
-    </div>
-
     <div class="card">
       <h2>Week history</h2>
       ${hist.length===0? '<div class="empty">No finished weeks yet — tap "Finish week" on the Home tab once you\'ve logged one.</div>' :
@@ -1237,7 +1365,7 @@ function renderSettings(){
           <div class="history-row">
             <div>
               <div>${new Date(h.startDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
-              <div class="d">${h.hours} hrs · ${fmtWhole(h.bills)} bills · ${fmtWhole(h.saved)} saved</div>
+              <div class="d">${fmtWhole(h.pay||h.net||0)} pay${h.misc ? ' + '+fmtWhole(h.misc)+' misc' : ''} · ${fmtWhole(h.bills)} bills · ${fmtWhole(h.saved)} saved</div>
             </div>
             <div class="amt ${h.left<0?'neg':'pos'}">${fmt(h.left)}</div>
           </div>
@@ -1246,20 +1374,46 @@ function renderSettings(){
     </div>
 
     <div class="card">
-      <h2>Envelope activity</h2>
-      <p class="subtext">Every deposit, spend, or quick-add — newest first — so you can verify a balance change actually happened.</p>
-      ${(!DATA.envelopeLog || DATA.envelopeLog.length===0) ? '<div class="empty">No envelope activity yet.</div>' :
-        DATA.envelopeLog.slice(0,30).map(l=>`
-          <div class="history-row">
-            <div>
-              <div>${l.envName}</div>
-              <div class="d">${new Date(l.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})} · ${l.action}</div>
+      <h2>Transaction history</h2>
+      <p class="subtext">Every dollar in and out — pay, misc income, bills marked paid, and envelope activity — grouped by day, newest first. Tap a day to expand or collapse it.</p>
+      ${txGroups.length===0 ? '<div class="empty">No transactions yet.</div>' :
+        txGroups.map((g,idx)=>{
+          const open = TX_COLLAPSE[g.key]===undefined ? idx===0 : !TX_COLLAPSE[g.key];
+          return `
+          <div style="border-bottom:1px solid var(--line);">
+            <div class="row-top" style="padding:10px 0; cursor:pointer;" onclick="toggleTxDay('${g.key}')">
+              <span style="font-weight:700; font-size:13.5px;">${g.dateLabel}</span>
+              <span style="display:flex; align-items:center; gap:10px;">
+                <span style="font-size:11.5px; color:var(--slate);">${g.items.length} item${g.items.length===1?'':'s'}</span>
+                <span class="amt ${g.net<0?'neg':'pos'}" style="font-size:13.5px;">${g.net<0?'-':'+'}${fmtWhole(Math.abs(g.net))}</span>
+                <span style="color:var(--slate);">${open?ICONS.up:ICONS.down}</span>
+              </span>
             </div>
-            <div class="amt ${l.amount<0?'neg':'pos'}">${l.amount<0?'-':'+'}${fmtWhole(Math.abs(l.amount))} <span style="color:var(--slate); font-weight:400;">→ ${fmtWhole(l.balanceAfter)}</span></div>
+            ${open ? g.items.map(t=>`
+              <div class="history-row">
+                <div>
+                  <div>${t.label}</div>
+                  <div class="d">${new Date(t.ts).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})} · ${t.category}</div>
+                </div>
+                <div class="amt ${t.amount<0?'neg':'pos'}">${t.amount<0?'-':'+'}${fmtWhole(Math.abs(t.amount))}</div>
+              </div>
+            `).join('') : ''}
           </div>
-        `).join('')
+        `;}).join('')
       }
-      ${DATA.envelopeLog && DATA.envelopeLog.length>30 ? '<div class="help-text" style="margin-top:10px">Showing the most recent 30 of '+DATA.envelopeLog.length+' entries.</div>' : ''}
+      <div class="settings-row" style="margin-top:16px; margin-bottom:0;">
+        <span class="settings-label">Keep transaction history for</span>
+        <select onchange="setRetention(this.value)">
+          <option value="30" ${DATA.historyRetentionDays===30?'selected':''}>30 days</option>
+          <option value="60" ${DATA.historyRetentionDays===60?'selected':''}>60 days</option>
+          <option value="90" ${DATA.historyRetentionDays===90?'selected':''}>90 days</option>
+          <option value="180" ${DATA.historyRetentionDays===180?'selected':''}>180 days</option>
+          <option value="365" ${DATA.historyRetentionDays===365?'selected':''}>1 year</option>
+          <option value="0" ${DATA.historyRetentionDays===0?'selected':''}>Forever</option>
+        </select>
+        <div class="help-text">Entries older than this are dropped automatically. This never affects envelope balances, bill/envelope settings, or the Week history summary above — only this itemized log.</div>
+      </div>
+      <button class="btn ghost small" style="margin-top:12px;" onclick="clearTransactionHistory()">Clear transaction history now</button>
     </div>
 
     <div class="card">
@@ -1287,14 +1441,24 @@ function renderSettings(){
     </div>
   `;
 }
-function setProfile(field, value){
-  DATA.profile[field] = parseFloat(value)||0;
-  saveData(); render();
-}
 function resetAll(){
   showConfirm('This clears everything and cannot be undone. Continue?', ()=>{
     DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
     saveData(); render();
+  });
+}
+function setRetention(val){
+  DATA.historyRetentionDays = parseInt(val,10) || 0;
+  pruneTransactionHistory();
+  saveData(); render();
+  flashToast(DATA.historyRetentionDays ? 'Will keep '+DATA.historyRetentionDays+' days of history' : 'Keeping history forever');
+}
+function clearTransactionHistory(){
+  showConfirm('Clear all itemized transaction history? Envelope balances, bills, and week history stay untouched — this only clears the log.', ()=>{
+    DATA.transactions = [];
+    DATA.envelopeLog = [];
+    saveData(); render();
+    flashToast('Transaction history cleared');
   });
 }
 
