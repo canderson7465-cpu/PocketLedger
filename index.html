@@ -554,6 +554,8 @@ const DEFAULT_DATA = {
   history: [],
   groupBankBalances: {},
   groupOrder: ['Car','General'],
+  billGroupOrder: ['General'],
+  billsViewMode: 'monthly',
   envelopeLog: [],
   transactions: [],
   historyRetentionDays: 90,
@@ -726,6 +728,8 @@ async function loadData(){
     DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
   }
   pruneTransactionHistory();
+  (DATA.bills||[]).forEach(b=>{ if(!b.group) b.group = 'General'; });
+  if(!DATA.billGroupOrder || !DATA.billGroupOrder.length) DATA.billGroupOrder = ['General'];
 }
 function saveData(showToast){
   clearTimeout(saveTimer);
@@ -871,25 +875,52 @@ function renderHome(){
 
     <div class="card">
       <h2><span class="step">2</span> Set money aside for bills</h2>
-      <p class="subtext">Check a bill once you've set its weekly share aside. Tap the amount to adjust it.</p>
-      ${DATA.bills.map(b=>{
-        const baseWeekly = weeklyFromBill(b);
-        const catchUp = b.catchUpBalance || 0;
-        const defaultWeekly = Math.max(0, Math.round(baseWeekly + catchUp));
-        const weekly = (DATA.week.billOverride[b.id]!==undefined)? DATA.week.billOverride[b.id] : defaultWeekly;
-        const on = !!DATA.week.billsChecked[b.id];
-        let status = '';
-        if(catchUp > 1){
-          status = `<span style="color:var(--alert); font-weight:700;">${fmtWhole(Math.round(catchUp))} behind</span>`;
-        } else if(catchUp < -1){
-          status = `<span style="color:var(--moss); font-weight:700;">ahead ${fmtWhole(Math.round(Math.abs(catchUp)))}</span>`;
-        }
-        return `<div class="row">
-          <div class="check ${on?'on':''}" onclick="toggleBill('${b.id}')"></div>
-          <div class="name">${b.name}<small>${fmtWhole(b.amount)}/${CADENCE_LABELS[b.cadence||'monthly']} · due ${b.day}${status? ' · '+status : ''}</small></div>
-          <input class="amt-input" type="number" step="1" value="${weekly.toFixed(0)}" onchange="setBillOverride('${b.id}', this.value)">
-        </div>`;
-      }).join('')}
+      <p class="subtext">Check a bill once you've set its weekly share aside. Tap the amount to adjust it. Bills with nothing left due drop to the bottom and tuck away as the month goes.</p>
+      ${(function(){
+        const rows = DATA.bills.map(b=>{
+          const baseWeekly = weeklyFromBill(b);
+          const catchUp = b.catchUpBalance || 0;
+          const defaultWeekly = Math.max(0, Math.round(baseWeekly + catchUp));
+          const weekly = (DATA.week.billOverride[b.id]!==undefined) ? DATA.week.billOverride[b.id] : defaultWeekly;
+          const on = !!DATA.week.billsChecked[b.id];
+          const naturallySettled = on || weekly<=0;
+          const forced = !!HOME_BILL_EXPANDED[b.id];
+          return { b, weekly, on, catchUp, naturallySettled, showCollapsed: naturallySettled && !forced, showCollapseChip: naturallySettled && forced };
+        });
+        const active = rows.filter(r=>!r.showCollapsed);
+        const settled = rows.filter(r=>r.showCollapsed);
+        const renderRow = (r)=>{
+          const b = r.b;
+          let status = '';
+          if(r.catchUp > 1){
+            status = `<span style="color:var(--alert); font-weight:700;">${fmtWhole(Math.round(r.catchUp))} behind</span>`;
+          } else if(r.catchUp < -1){
+            status = `<span style="color:var(--moss); font-weight:700;">ahead ${fmtWhole(Math.round(Math.abs(r.catchUp)))}</span>`;
+          }
+          return `<div class="row">
+            <div class="check ${r.on?'on':''}" onclick="toggleBill('${b.id}')"></div>
+            <div class="name">${b.name}<small>${fmtWhole(b.amount)}/${CADENCE_LABELS[b.cadence||'monthly']} · due ${b.day}${status? ' · '+status : ''}</small></div>
+            <input class="amt-input" type="number" step="1" value="${r.weekly.toFixed(0)}" onchange="setBillOverride('${b.id}', this.value)">
+            ${r.showCollapseChip ? `<button class="icon-btn" style="width:28px;height:28px;margin-left:4px;" onclick="collapseHomeBill('${b.id}')" aria-label="Collapse">${ICONS.down}</button>` : ''}
+          </div>`;
+        };
+        const renderSettledRow = (r)=>{
+          const b = r.b;
+          return `<div class="row" style="opacity:.65;">
+            <div class="check ${r.on?'on':''}" onclick="toggleBill('${b.id}')"></div>
+            <div class="name" style="font-weight:500;">${b.name}<small>${r.on ? 'Set aside this week' : 'Nothing due'}</small></div>
+            <div style="font-family:var(--font-mono); font-size:13px; color:var(--slate); margin-right:4px;">${fmtWhole(r.weekly)}</div>
+            <button class="icon-btn" style="width:28px;height:28px;" onclick="expandHomeBill('${b.id}')" aria-label="Edit">${ICONS.up}</button>
+          </div>`;
+        };
+        return `
+          ${active.map(renderRow).join('')}
+          ${settled.length ? `
+            <div style="font-size:11.5px; color:var(--slate); font-weight:700; text-transform:uppercase; letter-spacing:.04em; margin:${active.length?'14px':'0'} 0 4px;">Handled (${settled.length})</div>
+            ${settled.map(renderSettledRow).join('')}
+          ` : ''}
+        `;
+      })()}
     </div>
 
     <div class="card">
@@ -931,6 +962,9 @@ function renderHome(){
   `;
 }
 function dismissOnboarding(){ DATA.onboardingSeen = true; saveData(); render(); }
+let HOME_BILL_EXPANDED = {};
+function expandHomeBill(id){ HOME_BILL_EXPANDED[id] = true; render(); }
+function collapseHomeBill(id){ HOME_BILL_EXPANDED[id] = false; render(); }
 function setPayAmount(val){
   const n = parseFloat(val);
   DATA.week.payAmount = isNaN(n) ? 0 : n;
@@ -1047,15 +1081,17 @@ function renderEnvelopes(){
       const bank = (DATA.groupBankBalances && DATA.groupBankBalances[g] !== undefined) ? DATA.groupBankBalances[g] : 0;
       const diff = bank - total;
       const matches = Math.abs(diff) < 0.01;
+      const open = !ENV_COLLAPSE[g];
       return `
         <div class="env-group-title">
-          <span>${g} envelopes
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;margin-left:4px;" onclick="renameGroup('${g}')" aria-label="Rename group">✏️</button>
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="moveGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="moveGroup('${g}', 1)" aria-label="Move group down" ${gIdx===groups.length-1?'disabled':''}>${ICONS.down}</button>
+          <span style="cursor:pointer;" onclick="toggleEnvGroup('${g}')">${open?ICONS.down:ICONS.up} ${g} envelopes
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;margin-left:4px;" onclick="event.stopPropagation();renameGroup('${g}')" aria-label="Rename group">✏️</button>
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveGroup('${g}', 1)" aria-label="Move group down" ${gIdx===groups.length-1?'disabled':''}>${ICONS.down}</button>
           </span>
           <b>${fmtWhole(total)}</b>
         </div>
+        ${!open ? '' : `
         <div class="card" style="margin-bottom:14px; padding:14px 16px;">
           <div class="fields" style="margin-top:0;">
             <div class="field">
@@ -1105,10 +1141,16 @@ function renderEnvelopes(){
             </div>
           </div>
         `).join('')}
+        `}
       `;
     }).join('')}
     <button class="btn ghost" onclick="addEnvelope()">${ICONS.plus} Add an envelope</button>
   `;
+}
+let ENV_COLLAPSE = {};
+function toggleEnvGroup(g){
+  ENV_COLLAPSE[g] = !ENV_COLLAPSE[g];
+  render();
 }
 function setGroupBank(group, value){
   DATA.groupBankBalances = DATA.groupBankBalances || {};
@@ -1121,6 +1163,21 @@ function getOrderedGroups(){
   const ordered = order.filter(g=>existing.includes(g));
   const missing = existing.filter(g=>!ordered.includes(g));
   return [...ordered, ...missing];
+}
+function getOrderedBillGroups(){
+  const existing = [...new Set(DATA.bills.map(b=>b.group||'General'))];
+  const order = DATA.billGroupOrder || [];
+  const ordered = order.filter(g=>existing.includes(g));
+  const missing = existing.filter(g=>!ordered.includes(g));
+  return [...ordered, ...missing];
+}
+/* Weekly-equivalent amount converted into whichever unit the person wants
+   to view totals in (weekly/monthly/annual) — display only, storage always
+   stays weekly-equivalent internally. */
+function convertFromWeekly(weeklyAmt, mode){
+  if(mode==='monthly') return weeklyAmt * 52/12;
+  if(mode==='annual') return weeklyAmt * 52;
+  return weeklyAmt;
 }
 /* ---------------- Drag to reorder (bills, envelopes-within-group) ---------------- */
 let DRAG = null;
@@ -1164,6 +1221,19 @@ function dragEnd(evt){
   commitReorder(DRAG.scope, DRAG.id, newIndex);
   DRAG = null;
 }
+function reorderArrayWithinGroup(arr, groupField, groupName, id, newIndex){
+  const sameGroupIdxs = arr.map((e,i)=>({e,i})).filter(x=>(x.e[groupField]||'General')===groupName).map(x=>x.i);
+  const posInGroup = sameGroupIdxs.findIndex(i=>arr[i].id===id);
+  if(posInGroup<0 || posInGroup===newIndex) return false;
+  const actualOldIdx = sameGroupIdxs[posInGroup];
+  const [item] = arr.splice(actualOldIdx,1);
+  const newSameGroupIdxs = arr.map((e,i)=>({e,i})).filter(x=>(x.e[groupField]||'General')===groupName).map(x=>x.i);
+  const insertAt = newIndex >= newSameGroupIdxs.length
+    ? (newSameGroupIdxs.length ? newSameGroupIdxs[newSameGroupIdxs.length-1]+1 : arr.length)
+    : newSameGroupIdxs[newIndex];
+  arr.splice(insertAt,0,item);
+  return true;
+}
 function commitReorder(scope, id, newIndex){
   if(scope === 'bills'){
     const oldIndex = DATA.bills.findIndex(b=>b.id===id);
@@ -1171,19 +1241,14 @@ function commitReorder(scope, id, newIndex){
     const [item] = DATA.bills.splice(oldIndex,1);
     DATA.bills.splice(newIndex,0,item);
     saveData(); render();
+  } else if(scope.indexOf('billgroup:')===0){
+    const groupName = scope.slice(10);
+    if(reorderArrayWithinGroup(DATA.bills, 'group', groupName, id, newIndex)) saveData();
+    render();
   } else if(scope.indexOf('group:')===0){
     const groupName = scope.slice(6);
-    const sameGroupIdxs = DATA.envelopes.map((e,i)=>({e,i})).filter(x=>x.e.group===groupName).map(x=>x.i);
-    const posInGroup = sameGroupIdxs.findIndex(i=>DATA.envelopes[i].id===id);
-    if(posInGroup<0 || posInGroup===newIndex){ render(); return; }
-    const actualOldIdx = sameGroupIdxs[posInGroup];
-    const [item] = DATA.envelopes.splice(actualOldIdx,1);
-    const newSameGroupIdxs = DATA.envelopes.map((e,i)=>({e,i})).filter(x=>x.e.group===groupName).map(x=>x.i);
-    const insertAt = newIndex >= newSameGroupIdxs.length
-      ? (newSameGroupIdxs.length ? newSameGroupIdxs[newSameGroupIdxs.length-1]+1 : DATA.envelopes.length)
-      : newSameGroupIdxs[newIndex];
-    DATA.envelopes.splice(insertAt,0,item);
-    saveData(); render();
+    if(reorderArrayWithinGroup(DATA.envelopes, 'group', groupName, id, newIndex)) saveData();
+    render();
   } else {
     render();
   }
@@ -1281,58 +1346,174 @@ function envCustom(id, subtract){
 
 /* ---------------- BILLS ---------------- */
 function renderBills(){
+  const billGroups = getOrderedBillGroups();
+  const envGroups = getOrderedGroups();
+  const mode = DATA.billsViewMode || 'monthly';
+  const modeLabel = mode==='weekly'?'week':mode==='annual'?'year':'month';
+  const totalBillsWeekly = DATA.bills.reduce((s,b)=> s + weeklyFromBill(b), 0);
+  const totalSavingsWeekly = DATA.envelopes.reduce((s,e)=> s + weeklyFromMonthly(e.monthlyTarget||0), 0);
+
   return `
     <div class="card">
       <h2>Recurring bills</h2>
       <p class="subtext">Edit an amount the moment it changes — like a higher electric bill in summer. Weekly checklist amounts update automatically.</p>
-    </div>
-    ${DATA.bills.map((b,bIdx)=>{
-      const catchUp = b.catchUpBalance || 0;
-      let status = '';
-      if(catchUp > 1){
-        status = `<div class="help-text" style="margin-top:8px; color:var(--alert); font-weight:600;">${fmtWhole(Math.round(catchUp))} behind on this bill</div>`;
-      } else if(catchUp < -1){
-        status = `<div class="help-text" style="margin-top:8px; color:var(--moss); font-weight:600;">Ahead by ${fmtWhole(Math.round(Math.abs(catchUp)))} on this bill</div>`;
-      }
-      return `
-      <div class="bill-edit-row" data-drag-id="${b.id}" data-drag-scope="bills">
-        <div class="row-top">
-          <span class="drag-handle" onpointerdown="dragStart(event,'${b.id}','bills')">${ICONS.grip}</span>
-          <input value="${b.name}" style="border:none;background:none;font-weight:700;font-size:15px;font-family:inherit;flex:1;padding:0;" onchange="editBill('${b.id}','name',this.value)">
-          <button class="icon-btn" onclick="removeBill('${b.id}')">${ICONS.trash}</button>
-        </div>
-        <div class="fields">
-          <div class="field">
-            <label>Amount $</label>
-            <input type="number" value="${b.amount}" onchange="editBill('${b.id}','amount',this.value)">
-          </div>
-          <div class="field">
-            <label>Frequency</label>
-            <select onchange="editBill('${b.id}','cadence',this.value)">
-              <option value="weekly" ${(b.cadence||'monthly')==='weekly'?'selected':''}>Weekly</option>
-              <option value="monthly" ${(b.cadence||'monthly')==='monthly'?'selected':''}>Monthly</option>
-              <option value="quarterly" ${b.cadence==='quarterly'?'selected':''}>Every 3 months</option>
-              <option value="semiannual" ${b.cadence==='semiannual'?'selected':''}>Every 6 months</option>
-              <option value="annual" ${b.cadence==='annual'?'selected':''}>Annually</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Due</label>
-            <input value="${b.day}" onchange="editBill('${b.id}','day',this.value)">
-          </div>
-          <div class="field">
-            <label>Type</label>
-            <select onchange="editBill('${b.id}','type',this.value)">
-              <option value="fixed" ${b.type==='fixed'?'selected':''}>Fixed</option>
-              <option value="variable" ${b.type==='variable'?'selected':''}>Variable</option>
-            </select>
-          </div>
-        </div>
-        ${status}
+      <span class="settings-label" style="margin-bottom:8px;">View totals as</span>
+      <div class="chip-row">
+        ${['weekly','monthly','annual'].map(m=>`<div class="chip ${mode===m?'active':''}" onclick="setBillsViewMode('${m}')">${m==='weekly'?'Weekly':m==='monthly'?'Monthly':'Annual'}</div>`).join('')}
       </div>
-    `;}).join('')}
+    </div>
+
+    <div class="hero" style="margin-bottom:14px;">
+      <div class="hero-label">Total bills / ${modeLabel}</div>
+      <div class="hero-amount" style="font-size:32px;">${fmt(convertFromWeekly(totalBillsWeekly, mode))}</div>
+    </div>
+
+    <div class="card">
+      <h2>Savings <span style="font-weight:400;color:var(--slate);font-size:11.5px;text-transform:none;">(pulled from Envelopes' monthly goals)</span></h2>
+      <p class="subtext">Set goals on the Envelopes tab — this just totals them here so bills and savings can be seen side by side.</p>
+      ${envGroups.every(g=>DATA.envelopes.filter(e=>e.group===g && e.monthlyTarget>0).length===0)
+        ? '<div class="empty">No envelopes with a monthly goal yet.</div>'
+        : envGroups.map(g=>{
+          const items = DATA.envelopes.filter(e=>e.group===g && e.monthlyTarget>0);
+          if(items.length===0) return '';
+          const groupWeekly = items.reduce((s,e)=>s+weeklyFromMonthly(e.monthlyTarget),0);
+          const open = !SAVINGS_COLLAPSE[g];
+          return `
+            <div class="row" style="cursor:pointer;" onclick="toggleSavingsGroup('${g}')">
+              <div class="name" style="display:flex;align-items:center;gap:6px;"><span style="color:var(--slate);">${open?ICONS.down:ICONS.up}</span>${g}</div>
+              <div style="font-family:var(--font-mono);font-weight:700;">${fmt(convertFromWeekly(groupWeekly, mode))}</div>
+            </div>
+            ${open ? items.map(e=>`
+              <div class="row" style="padding-left:22px;">
+                <div class="name" style="font-weight:400;color:var(--slate);">${e.name}</div>
+                <div style="font-family:var(--font-mono);">${fmt(convertFromWeekly(weeklyFromMonthly(e.monthlyTarget), mode))}</div>
+              </div>
+            `).join('') : ''}
+          `;
+        }).join('')
+      }
+      <div class="pay-breakdown" style="border-top:1px solid var(--line); margin-top:10px;">
+        <span>Total savings / ${modeLabel}</span>
+        <b>${fmt(convertFromWeekly(totalSavingsWeekly, mode))}</b>
+      </div>
+    </div>
+
+    ${billGroups.map((g,gIdx)=>{
+      const items = DATA.bills.filter(b=>(b.group||'General')===g);
+      const groupWeekly = items.reduce((s,b)=>s+weeklyFromBill(b),0);
+      const open = !BILLS_COLLAPSE[g];
+      return `
+        <div class="env-group-title">
+          <span style="cursor:pointer;" onclick="toggleBillsGroup('${g}')">${open?ICONS.down:ICONS.up} ${g}
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;margin-left:4px;" onclick="event.stopPropagation();renameBillGroup('${g}')" aria-label="Rename group">✏️</button>
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveBillGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
+            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveBillGroup('${g}', 1)" aria-label="Move group down" ${gIdx===billGroups.length-1?'disabled':''}>${ICONS.down}</button>
+          </span>
+          <b>${fmt(convertFromWeekly(groupWeekly, mode))}</b>
+        </div>
+        ${!open ? '' : items.map(b=>{
+          const catchUp = b.catchUpBalance || 0;
+          let status = '';
+          if(catchUp > 1){
+            status = `<div class="help-text" style="margin-top:8px; color:var(--alert); font-weight:600;">${fmtWhole(Math.round(catchUp))} behind on this bill</div>`;
+          } else if(catchUp < -1){
+            status = `<div class="help-text" style="margin-top:8px; color:var(--moss); font-weight:600;">Ahead by ${fmtWhole(Math.round(Math.abs(catchUp)))} on this bill</div>`;
+          }
+          return `
+          <div class="bill-edit-row" data-drag-id="${b.id}" data-drag-scope="billgroup:${g}">
+            <div class="row-top">
+              <span class="drag-handle" onpointerdown="dragStart(event,'${b.id}','billgroup:${g}')">${ICONS.grip}</span>
+              <input value="${b.name}" style="border:none;background:none;font-weight:700;font-size:15px;font-family:inherit;flex:1;padding:0;" onchange="editBill('${b.id}','name',this.value)">
+              <button class="icon-btn" onclick="removeBill('${b.id}')">${ICONS.trash}</button>
+            </div>
+            <div class="fields">
+              <div class="field">
+                <label>Amount $</label>
+                <input type="number" value="${b.amount}" onchange="editBill('${b.id}','amount',this.value)">
+              </div>
+              <div class="field">
+                <label>Frequency</label>
+                <select onchange="editBill('${b.id}','cadence',this.value)">
+                  <option value="weekly" ${(b.cadence||'monthly')==='weekly'?'selected':''}>Weekly</option>
+                  <option value="monthly" ${(b.cadence||'monthly')==='monthly'?'selected':''}>Monthly</option>
+                  <option value="quarterly" ${b.cadence==='quarterly'?'selected':''}>Every 3 months</option>
+                  <option value="semiannual" ${b.cadence==='semiannual'?'selected':''}>Every 6 months</option>
+                  <option value="annual" ${b.cadence==='annual'?'selected':''}>Annually</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Due</label>
+                <input value="${b.day}" onchange="editBill('${b.id}','day',this.value)">
+              </div>
+              <div class="field">
+                <label>Type</label>
+                <select onchange="editBill('${b.id}','type',this.value)">
+                  <option value="fixed" ${b.type==='fixed'?'selected':''}>Fixed</option>
+                  <option value="variable" ${b.type==='variable'?'selected':''}>Variable</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Group</label>
+                <select onchange="handleBillGroupChange('${b.id}', this.value)">
+                  ${billGroups.map(g2=>`<option value="${g2}" ${g2===(b.group||'General')?'selected':''}>${g2}</option>`).join('')}
+                  <option value="__new__">+ New group…</option>
+                </select>
+              </div>
+            </div>
+            ${status}
+          </div>
+        `;}).join('')}
+      `;
+    }).join('')}
     <button class="btn ghost" onclick="addBill()">${ICONS.plus} Add a bill</button>
   `;
+}
+let BILLS_COLLAPSE = {};
+let SAVINGS_COLLAPSE = {};
+function toggleBillsGroup(g){ BILLS_COLLAPSE[g] = !BILLS_COLLAPSE[g]; render(); }
+function toggleSavingsGroup(g){ SAVINGS_COLLAPSE[g] = !SAVINGS_COLLAPSE[g]; render(); }
+function setBillsViewMode(mode){ DATA.billsViewMode = mode; saveData(); render(); }
+function handleBillGroupChange(id, value){
+  if(value === '__new__'){
+    showPrompt('Name for the new bill group?', '', (name)=>{
+      if(!name || !name.trim()){ render(); return; }
+      const trimmed = name.trim();
+      if(!(DATA.billGroupOrder||[]).includes(trimmed)){
+        DATA.billGroupOrder = [...(DATA.billGroupOrder||[]), trimmed];
+      }
+      editBill(id, 'group', trimmed);
+    });
+    return;
+  }
+  editBill(id, 'group', value);
+}
+function renameBillGroup(oldName){
+  showPrompt('Rename "'+oldName+'" to:', oldName, (newName)=>{
+    if(!newName || !newName.trim() || newName.trim()===oldName) return;
+    const trimmed = newName.trim();
+    const merging = DATA.bills.some(b=>(b.group||'General')===trimmed);
+    const doRename = ()=>{
+      DATA.bills.forEach(b=>{ if((b.group||'General')===oldName) b.group = trimmed; });
+      DATA.billGroupOrder = (DATA.billGroupOrder||[]).map(g=> g===oldName ? trimmed : g)
+        .filter((g,i,arr)=>arr.indexOf(g)===i);
+      saveData(); render();
+      flashToast('Renamed to '+trimmed);
+    };
+    if(merging){
+      showConfirm('"'+trimmed+'" already exists — this will combine both into one group. Continue?', doRename);
+    } else {
+      doRename();
+    }
+  });
+}
+function moveBillGroup(name, direction){
+  const groups = getOrderedBillGroups();
+  const idx = groups.indexOf(name);
+  const swapIdx = idx + direction;
+  if(swapIdx<0 || swapIdx>=groups.length) return;
+  [groups[idx], groups[swapIdx]] = [groups[swapIdx], groups[idx]];
+  DATA.billGroupOrder = groups;
+  saveData(); render();
 }
 function editBill(id, field, value){
   const b = DATA.bills.find(x=>x.id===id);
@@ -1348,7 +1529,8 @@ function removeBill(id){
 }
 function addBill(){
   const id = 'b_'+Date.now();
-  DATA.bills.push({id, name:'New bill', amount:0, day:'—', type:'variable'});
+  const group = (DATA.billGroupOrder && DATA.billGroupOrder[0]) || 'General';
+  DATA.bills.push({id, name:'New bill', amount:0, day:'—', type:'variable', group});
   saveData(); render();
 }
 
