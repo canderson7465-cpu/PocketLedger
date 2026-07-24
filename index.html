@@ -977,6 +977,7 @@ function renderHome(){
           const catchUp = e.catchUpBalance || 0;
           const suggested = Math.max(0, Math.round(baseWeekly + catchUp));
           const added = DATA.week.envDeposits[e.id] || 0;
+          const draftVal = HOME_ENV_DRAFT[e.id] !== undefined ? HOME_ENV_DRAFT[e.id] : suggested;
           let label;
           if(added>0){
             label = 'Added '+fmtWhole(added)+' this week';
@@ -991,16 +992,46 @@ function renderHome(){
             <div class="name">${e.name}<small>${label}</small></div>
             ${added>0
               ? `<button class="btn ghost small" onclick="undoDeposit('${e.id}', ${added})">Undo</button>`
-              : `<input class="amt-input" type="number" step="1" id="envAmt_${e.id}" value="${suggested}">
+              : `<input class="amt-input" type="number" step="1" id="envAmt_${e.id}" value="${draftVal}" oninput="HOME_ENV_DRAFT['${e.id}']=this.value">
                  <button class="btn primary small" onclick="addEnvAmount('${e.id}')">Add</button>`}
           </div>`;
         }).join('')}
         `;
       }).join('')}
+
+      ${DATA.envelopes.length ? `
+      <div style="margin-top:16px; padding-top:14px; border-top:1px dashed var(--line);">
+        <span class="settings-label">Add to another envelope</span>
+        <p class="subtext" style="margin-top:-2px;">For anything without a weekly goal — like an emergency fund set to $0/mo — or extra beyond the suggested amount.</p>
+        <div class="fields">
+          <div class="field" style="flex:1.6;">
+            <label>Envelope</label>
+            <select id="homeEnvPicker">
+              ${DATA.envelopes.map(e=>`<option value="${e.id}">${e.name}${e.group?' — '+e.group:''}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Amount $</label>
+            <input type="number" step="1" id="homeEnvPickerAmt" placeholder="0">
+          </div>
+        </div>
+        <button class="btn ghost small" style="margin-top:10px;" onclick="addToPickedEnvelope()">${ICONS.plus} Add</button>
+      </div>
+      ` : ''}
     </div>
 
     <button class="btn primary" onclick="finishWeek()">Finish week & start new</button>
   `;
+}
+let HOME_ENV_DRAFT = {};
+function addToPickedEnvelope(){
+  const sel = document.getElementById('homeEnvPicker');
+  const amtInput = document.getElementById('homeEnvPickerAmt');
+  const envId = sel ? sel.value : null;
+  const n = amtInput ? parseFloat(amtInput.value) : NaN;
+  if(!envId){ flashToast('Pick an envelope first'); return; }
+  if(isNaN(n) || n<=0){ flashToast('Enter an amount first'); return; }
+  quickDeposit(envId, n);
 }
 function dismissOnboarding(){ DATA.onboardingSeen = true; saveData(); render(); }
 let HOME_BILL_EXPANDED = {};
@@ -1061,6 +1092,7 @@ function addEnvAmount(envId){
   const n = input ? parseFloat(input.value) : NaN;
   if(isNaN(n) || n<=0){ flashToast('Enter an amount first'); return; }
   quickDeposit(envId, n);
+  delete HOME_ENV_DRAFT[envId];
 }
 function quickDeposit(envId, amount){
   const env = DATA.envelopes.find(e=>e.id===envId);
@@ -1076,6 +1108,7 @@ function undoDeposit(envId, amount){
   if(!env) return;
   env.balance -= amount;
   delete DATA.week.envDeposits[envId];
+  delete HOME_ENV_DRAFT[envId];
   logEnvelope(env, 'undo weekly deposit', -amount);
   saveData(); render();
 }
@@ -1107,6 +1140,7 @@ function finishWeek(){
     b.catchUpBalance = (b.catchUpBalance || 0) + shortfall;
   });
   DATA.week = { startDate: todayISO(), payAmount:0, miscIncome:[], billsChecked:{}, billOverride:{}, envDeposits:{} };
+  HOME_ENV_DRAFT = {};
   saveData();
   render();
   flashToast('Week saved — fresh start!');
