@@ -274,19 +274,60 @@
   .btn.danger{background:var(--alert-light); color:var(--alert);}
   .btn.small{width:auto; padding:9px 14px; font-size:13px; border-radius:10px;}
 
-  /* ---------- Envelopes ---------- */
+  /* ---------- Envelopes / bill groups ---------- */
   .env-group-title{
+    margin:20px 0 8px 4px;
+  }
+  .egt-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .egt-name{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    min-width:0;
+    cursor:pointer;
+    color:var(--slate);
+  }
+  .egt-name .gname{
     font-family:var(--font-display);
     font-weight:700;
     font-size:14px;
-    margin:20px 0 10px 4px;
-    display:flex;
-    justify-content:space-between;
-    color:var(--slate);
     text-transform:uppercase;
     letter-spacing:.04em;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
   }
-  .env-group-title b{color:var(--ink); font-family:var(--font-mono); text-transform:none; letter-spacing:0;}
+  .egt-name svg{ flex-shrink:0; width:16px; height:16px; display:block; }
+  .env-group-title b{
+    color:var(--ink);
+    font-family:var(--font-mono);
+    font-size:14px;
+    font-weight:700;
+    text-transform:none;
+    letter-spacing:0;
+    flex-shrink:0;
+    white-space:nowrap;
+  }
+  .egt-actions{
+    display:flex;
+    justify-content:flex-end;
+    gap:2px;
+    margin-top:2px;
+  }
+  .egt-actions .icon-btn{
+    width:26px; height:26px;
+    border:none;
+    background:none;
+  }
+  .egt-actions .icon-btn svg{ width:16px; height:16px; display:block; }
+  .icon-btn-sm svg{ width:16px; height:16px; display:block; }
+  .icon-chev{ display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; flex-shrink:0; }
+  .icon-chev svg{ width:16px; height:16px; display:block; }
   .envelope{
     background:var(--card);
     border:1px solid var(--line);
@@ -901,7 +942,7 @@ function renderHome(){
             <div class="check ${r.on?'on':''}" onclick="toggleBill('${b.id}')"></div>
             <div class="name">${b.name}<small>${fmtWhole(b.amount)}/${CADENCE_LABELS[b.cadence||'monthly']} · due ${b.day}${status? ' · '+status : ''}</small></div>
             <input class="amt-input" type="number" step="1" value="${r.weekly.toFixed(0)}" onchange="setBillOverride('${b.id}', this.value)">
-            ${r.showCollapseChip ? `<button class="icon-btn" style="width:28px;height:28px;margin-left:4px;" onclick="collapseHomeBill('${b.id}')" aria-label="Collapse">${ICONS.down}</button>` : ''}
+            ${r.showCollapseChip ? `<button class="icon-btn icon-btn-sm" style="width:28px;height:28px;margin-left:4px;" onclick="collapseHomeBill('${b.id}')" aria-label="Collapse">${ICONS.down}</button>` : ''}
           </div>`;
         };
         const renderSettledRow = (r)=>{
@@ -910,7 +951,7 @@ function renderHome(){
             <div class="check ${r.on?'on':''}" onclick="toggleBill('${b.id}')"></div>
             <div class="name" style="font-weight:500;">${b.name}<small>${r.on ? 'Set aside this week' : 'Nothing due'}</small></div>
             <div style="font-family:var(--font-mono); font-size:13px; color:var(--slate); margin-right:4px;">${fmtWhole(r.weekly)}</div>
-            <button class="icon-btn" style="width:28px;height:28px;" onclick="expandHomeBill('${b.id}')" aria-label="Edit">${ICONS.up}</button>
+            <button class="icon-btn icon-btn-sm" style="width:28px;height:28px;" onclick="expandHomeBill('${b.id}')" aria-label="Edit">${ICONS.up}</button>
           </div>`;
         };
         return `
@@ -1084,12 +1125,15 @@ function renderEnvelopes(){
       const open = !ENV_COLLAPSE[g];
       return `
         <div class="env-group-title">
-          <span style="cursor:pointer;" onclick="toggleEnvGroup('${g}')">${open?ICONS.down:ICONS.up} ${g} envelopes
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;margin-left:4px;" onclick="event.stopPropagation();renameGroup('${g}')" aria-label="Rename group">✏️</button>
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveGroup('${g}', 1)" aria-label="Move group down" ${gIdx===groups.length-1?'disabled':''}>${ICONS.down}</button>
-          </span>
-          <b>${fmtWhole(total)}</b>
+          <div class="egt-row">
+            <span class="egt-name" onclick="toggleEnvGroup('${g}')">${open?ICONS.down:ICONS.up}<span class="gname">${g} envelopes</span></span>
+            <b>${fmtWhole(total)}</b>
+          </div>
+          <div class="egt-actions">
+            <button class="icon-btn" onclick="renameGroup('${g}')" aria-label="Rename group">✏️</button>
+            <button class="icon-btn" onclick="moveGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
+            <button class="icon-btn" onclick="moveGroup('${g}', 1)" aria-label="Move group down" ${gIdx===groups.length-1?'disabled':''}>${ICONS.down}</button>
+          </div>
         </div>
         ${!open ? '' : `
         <div class="card" style="margin-bottom:14px; padding:14px 16px;">
@@ -1380,7 +1424,7 @@ function renderBills(){
           const open = !SAVINGS_COLLAPSE[g];
           return `
             <div class="row" style="cursor:pointer;" onclick="toggleSavingsGroup('${g}')">
-              <div class="name" style="display:flex;align-items:center;gap:6px;"><span style="color:var(--slate);">${open?ICONS.down:ICONS.up}</span>${g}</div>
+              <div class="name" style="display:flex;align-items:center;gap:6px;"><span class="icon-chev" style="color:var(--slate);">${open?ICONS.down:ICONS.up}</span>${g}</div>
               <div style="font-family:var(--font-mono);font-weight:700;">${fmt(convertFromWeekly(groupWeekly, mode))}</div>
             </div>
             ${open ? items.map(e=>`
@@ -1398,18 +1442,29 @@ function renderBills(){
       </div>
     </div>
 
+    <div class="card" style="background:var(--moss-light); border-color:var(--moss);">
+      <div class="pay-breakdown" style="border-top:none; margin-top:0; padding-top:0;">
+        <span style="font-weight:700; color:var(--ink);">Bills + savings / ${modeLabel}</span>
+        <b style="font-size:17px;">${fmt(convertFromWeekly(totalBillsWeekly + totalSavingsWeekly, mode))}</b>
+      </div>
+      <div class="help-text" style="margin-top:6px;">Bills and savings are kept separate above on purpose, since a few dollar amounts (like the old "Car Reg, Maint &amp; Tires" bill vs. the three car envelopes) can end up representing the same obligation twice. This combined figure is only accurate once every dollar is entered as <i>either</i> a bill <i>or</i> an envelope goal — not both.</div>
+    </div>
+
     ${billGroups.map((g,gIdx)=>{
       const items = DATA.bills.filter(b=>(b.group||'General')===g);
       const groupWeekly = items.reduce((s,b)=>s+weeklyFromBill(b),0);
       const open = !BILLS_COLLAPSE[g];
       return `
         <div class="env-group-title">
-          <span style="cursor:pointer;" onclick="toggleBillsGroup('${g}')">${open?ICONS.down:ICONS.up} ${g}
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;margin-left:4px;" onclick="event.stopPropagation();renameBillGroup('${g}')" aria-label="Rename group">✏️</button>
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveBillGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
-            <button class="icon-btn" style="width:22px;height:22px;border:none;background:none;vertical-align:middle;" onclick="event.stopPropagation();moveBillGroup('${g}', 1)" aria-label="Move group down" ${gIdx===billGroups.length-1?'disabled':''}>${ICONS.down}</button>
-          </span>
-          <b>${fmt(convertFromWeekly(groupWeekly, mode))}</b>
+          <div class="egt-row">
+            <span class="egt-name" onclick="toggleBillsGroup('${g}')">${open?ICONS.down:ICONS.up}<span class="gname">${g}</span></span>
+            <b>${fmt(convertFromWeekly(groupWeekly, mode))}</b>
+          </div>
+          <div class="egt-actions">
+            <button class="icon-btn" onclick="renameBillGroup('${g}')" aria-label="Rename group">✏️</button>
+            <button class="icon-btn" onclick="moveBillGroup('${g}', -1)" aria-label="Move group up" ${gIdx===0?'disabled':''}>${ICONS.up}</button>
+            <button class="icon-btn" onclick="moveBillGroup('${g}', 1)" aria-label="Move group down" ${gIdx===billGroups.length-1?'disabled':''}>${ICONS.down}</button>
+          </div>
         </div>
         ${!open ? '' : items.map(b=>{
           const catchUp = b.catchUpBalance || 0;
@@ -1568,7 +1623,7 @@ function renderSettings(){
               <span style="display:flex; align-items:center; gap:10px;">
                 <span style="font-size:11.5px; color:var(--slate);">${g.items.length} item${g.items.length===1?'':'s'}</span>
                 <span class="amt ${g.net<0?'neg':'pos'}" style="font-size:13.5px;">${g.net<0?'-':'+'}${fmtWhole(Math.abs(g.net))}</span>
-                <span style="color:var(--slate);">${open?ICONS.up:ICONS.down}</span>
+                <span class="icon-chev" style="color:var(--slate);">${open?ICONS.up:ICONS.down}</span>
               </span>
             </div>
             ${open ? g.items.map(t=>`
