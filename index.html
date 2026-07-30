@@ -484,6 +484,25 @@
     color:var(--ink);
   }
   .settings-label{font-size:13px; font-weight:600; margin-bottom:6px; display:block;}
+  .progress-track{
+    height:8px;
+    border-radius:6px;
+    background:var(--paper-2);
+    overflow:hidden;
+    margin-top:10px;
+  }
+  .progress-fill{
+    height:100%;
+    border-radius:6px;
+  }
+  .progress-label{
+    display:flex;
+    justify-content:space-between;
+    font-size:11px;
+    color:var(--slate);
+    margin-top:5px;
+    font-weight:600;
+  }
   .settings-row{margin-bottom:16px;}
   .settings-row input{
     width:100%;
@@ -813,6 +832,27 @@ function savingsAllocatedTotal(){
 function leftToSpend(){
   return netPay() - billsAllocatedTotal() - savingsAllocatedTotal();
 }
+/* High-level "how's the month going" gauge for bills — separate from the
+   weekly checklist, since not every bill gets touched every week (a
+   quarterly or annual bill might sit untouched for weeks and that's
+   normal, not "behind"). Target is each bill's monthly-equivalent share;
+   progress is whatever's been checked off in weeks that fall in the
+   current calendar month, including the in-progress week. Weeks aren't
+   calendar-aligned, so this is a rough gauge, not an exact ledger. */
+function monthlyBillsProgress(){
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const inThisMonth = (iso)=>{
+    const d = new Date(iso+'T00:00:00');
+    return d.getFullYear()===y && d.getMonth()===m;
+  };
+  let paid = 0;
+  (DATA.history||[]).forEach(h=>{ if(inThisMonth(h.startDate)) paid += (h.bills||0); });
+  if(inThisMonth(DATA.week.startDate)) paid += billsAllocatedTotal();
+  const target = DATA.bills.reduce((s,b)=> s + weeklyFromBill(b)*52/12, 0);
+  const pct = target>0 ? Math.min(100, (paid/target)*100) : (paid>0 ? 100 : 0);
+  return { paid, target, pct, remaining: Math.max(0, target-paid) };
+}
 
 /* ---------------- Render root ---------------- */
 function render(){
@@ -847,6 +887,8 @@ function renderHome(){
   const billsPct = Math.max(0, billsT/total*100);
   const savPct = Math.max(0, savT/total*100);
   const leftPct = Math.max(0, Math.min(100-billsPct-savPct, (left>0? left/total*100 : 0)));
+  const monthProgress = monthlyBillsProgress();
+  const monthName = new Date().toLocaleDateString('en-US',{month:'long'});
 
   let onboarding = '';
   if(!DATA.onboardingSeen){
@@ -855,7 +897,7 @@ function renderHome(){
       <h2>👋 Welcome to Pocket Ledger</h2>
       <p>Three steps every week:</p>
       <ol>
-        <li>Enter hours worked this week</li>
+        <li>Enter take-home pay for the week, and any additional income if applicable</li>
         <li>Check off bills as you set money aside</li>
         <li>Drop a little into savings envelopes</li>
       </ol>
@@ -879,6 +921,19 @@ function renderHome(){
         <span class="savings"><span class="dot"></span>Saved ${fmtWhole(savT)}</span>
         <span class="left"><span class="dot"></span>Free ${fmtWhole(Math.max(left,0))}</span>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>${monthName} bills progress</h2>
+      <p class="subtext">A high-level look at the whole month — not every bill gets touched every week (a quarterly or annual one might sit for a while), so this tracks the bigger picture instead of just this week's checklist.</p>
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+        <span style="font-family:var(--font-mono); font-weight:700; font-size:22px;">${fmt(monthProgress.paid)}</span>
+        <span style="color:var(--slate); font-size:13px;">of ~${fmtWhole(monthProgress.target)}/mo set aside</span>
+      </div>
+      <div style="height:12px; border-radius:8px; overflow:hidden; background:var(--paper-2);">
+        <div style="height:100%; width:${monthProgress.pct}%; background:var(--moss); border-radius:8px;"></div>
+      </div>
+      <div class="help-text" style="margin-top:8px;">${monthProgress.remaining>0.5 ? fmtWhole(monthProgress.remaining)+' left to go for the month' : 'Fully covered for the month 🎉'}</div>
     </div>
 
     <div class="card">
@@ -968,7 +1023,7 @@ function renderHome(){
       <h2><span class="step">3</span> Add to savings envelopes</h2>
       <p class="subtext">A few dollars now keeps the big goals — car repairs, healthcare, emergencies — from becoming a crisis later.</p>
       ${getOrderedGroups().map(g=>{
-        const groupItems = DATA.envelopes.filter(e=>e.group===g && e.monthlyTarget>0);
+        const groupItems = DATA.envelopes.filter(e=>e.group===g && (e.monthlyTarget>0 || (DATA.week.envDeposits[e.id]||0) > 0));
         if(groupItems.length===0) return '';
         return `
         <div style="font-family:var(--font-display); font-weight:700; font-size:12.5px; color:var(--slate); text-transform:uppercase; letter-spacing:.04em; margin:14px 0 6px;">${g}</div>
@@ -1191,7 +1246,7 @@ function renderEnvelopes(){
                 <button class="icon-btn" onclick="removeEnvelope('${e.id}')">${ICONS.trash}</button>
               </div>
               <div class="ebal" style="margin-top:4px;">${fmt(e.balance)}</div>
-              ${e.monthlyTarget>0 && Math.abs(e.catchUpBalance||0) > 1 ? `<div class="help-text" style="margin-top:4px; ${(e.catchUpBalance>0)?'color:var(--alert);':'color:var(--moss);'} font-weight:600;">${e.catchUpBalance>0 ? fmtWhole(Math.round(e.catchUpBalance))+' behind on this goal' : 'Ahead by '+fmtWhole(Math.round(Math.abs(e.catchUpBalance)))+' on this goal'}</div>` : ''}
+              ${progressBarHtml(catchUpProgress(e.catchUpBalance, e.monthlyTarget))}
               <div class="fields" style="margin-top:10px;">
                 <div class="field">
                   <label>Group</label>
@@ -1256,6 +1311,28 @@ function convertFromWeekly(weeklyAmt, mode){
   if(mode==='monthly') return weeklyAmt * 52/12;
   if(mode==='annual') return weeklyAmt * 52;
   return weeklyAmt;
+}
+/* Turns a catch-up balance (dollars behind/ahead of the ideal weekly pace)
+   into a 0–100% "on track" bar. referenceAmount is one month's worth of
+   the item's normal contribution/payment — how far behind you'd have to
+   be for the bar to read empty. Returns null when there's no periodic
+   amount to measure against (e.g. a $0 bill or a goal-less envelope). */
+function catchUpProgress(catchUp, referenceAmount){
+  if(!referenceAmount || referenceAmount<=0) return null;
+  const cu = catchUp || 0;
+  if(cu <= 0){
+    const aheadBy = Math.round(Math.abs(cu));
+    return { pct:100, color:'var(--moss)', label: aheadBy>1 ? 'Ahead by '+fmtWhole(aheadBy) : 'On track' };
+  }
+  const pct = Math.max(4, Math.min(100, Math.round((1 - cu/referenceAmount)*100)));
+  return { pct, color:'var(--alert)', label: fmtWhole(Math.round(cu))+' behind pace' };
+}
+function progressBarHtml(progress){
+  if(!progress) return '';
+  return `
+    <div class="progress-track"><div class="progress-fill" style="width:${progress.pct}%; background:${progress.color};"></div></div>
+    <div class="progress-label"><span>${progress.label}</span><span>${progress.pct}%</span></div>
+  `;
 }
 /* ---------------- Drag to reorder (bills, envelopes-within-group) ---------------- */
 let DRAG = null;
@@ -1502,12 +1579,8 @@ function renderBills(){
         </div>
         ${!open ? '' : items.map(b=>{
           const catchUp = b.catchUpBalance || 0;
-          let status = '';
-          if(catchUp > 1){
-            status = `<div class="help-text" style="margin-top:8px; color:var(--alert); font-weight:600;">${fmtWhole(Math.round(catchUp))} behind on this bill</div>`;
-          } else if(catchUp < -1){
-            status = `<div class="help-text" style="margin-top:8px; color:var(--moss); font-weight:600;">Ahead by ${fmtWhole(Math.round(Math.abs(catchUp)))} on this bill</div>`;
-          }
+          const monthlyEquiv = weeklyFromBill(b) * 52/12;
+          const barHtml = progressBarHtml(catchUpProgress(catchUp, monthlyEquiv));
           return `
           <div class="bill-edit-row" data-drag-id="${b.id}" data-drag-scope="billgroup:${g}">
             <div class="row-top">
@@ -1549,7 +1622,7 @@ function renderBills(){
                 </select>
               </div>
             </div>
-            ${status}
+            ${barHtml}
           </div>
         `;}).join('')}
       `;
